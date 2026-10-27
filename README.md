@@ -30,13 +30,13 @@ The notebook uses the data from one subject of the [FreeSurfer TRACULA tutorial 
   conda activate tractography-masterclass
   jupyter lab tractography_masterclass.ipynb      # start it from this folder
   ```
-  Option to specify your paths for add their paths in the notebook's "Optional: your paths" cell (or set `MRTRIX_DIR`, `FREESURFER_HOME`, `TRACULA_TUTORIAL_DIR`).
+  Option to specify your paths in the notebook's "Optional: your paths" cell (set `MRTRIX_DIR`, `FREESURFER_HOME`, `TRACULA_TUTORIAL_DIR`).
 
 All downloads go to `data/` and all results to `outputs/` inside the repository folder.
 
 ## Regenerating the whole-brain tractogram
 
-Needs the full TRACULA tutorial subject (DWI ~2.5 GB) and MRtrix3:
+Needs the TRACULA tutorial subject DWI data ( ~2.5 GB) and MRtrix3:
 
 ```bash
 bash scripts/01_whole_brain_tractogram.sh tracula_tutorial/trc/sub-BANDA001 derivatives/sub-BANDA001 16
