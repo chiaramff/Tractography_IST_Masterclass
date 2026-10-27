@@ -8,7 +8,6 @@ derivatives_tractography.log
 # downloaded inputs and generated outputs
 data/
 outputs/
-derivatives/*/work/
 
 # wholebrain.tck is published as a GitHub release asset, not committed
 derivatives/*/tractography/*.tck

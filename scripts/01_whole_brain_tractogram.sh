@@ -4,7 +4,7 @@
 # Input : TRACULA-preprocessed DWI (eddy/topup corrected, diffusion space) + aparc+aseg in diffusion space
 # Output: <out_dir>/tractography/wholebrain.tck      (probabilistic, iFOD2, SIFT-filtered)
 #         <out_dir>/tractography/wholebrain_det.tck  (deterministic, SD_STREAM, same settings, SIFT-filtered)
-#         <out_dir>/work/                        (intermediates, safe to delete)
+#         <out_dir>/mrtrix/                      (MRtrix3 intermediates: FODs, 5TT, full tractograms; safe to delete)
 #
 # Usage : bash scripts/01_whole_brain_tractogram.sh <tracula_subject_dir> <out_dir> [nthreads]
 #   e.g.  bash scripts/01_whole_brain_tractogram.sh tracula_tutorial/trc/sub-BANDA001 derivatives/sub-BANDA001 32
@@ -20,8 +20,8 @@ N_GEN=${N_GEN:-2000000}     # streamlines generated
 N_KEEP=${N_KEEP:-200000}    # streamlines kept after SIFT (keeps the file small enough to share)
 
 export MRTRIX_NTHREADS=$NTHREADS
-mkdir -p "$OUT/tractography" "$OUT/work"
-cd "$OUT/work"
+mkdir -p "$OUT/tractography" "$OUT/mrtrix"
+cd "$OUT/mrtrix"
 
 # 1. DWI with gradient table (FSL bvecs/bvals written by TRACULA)
 [ -f dwi.mif ] || mrconvert "$TRC/dmri/dwi.nii.gz" dwi.mif -fslgrad "$TRC/dmri/bvecs" "$TRC/dmri/bvals"
