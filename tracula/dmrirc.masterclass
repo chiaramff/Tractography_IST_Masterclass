@@ -1,0 +1,119 @@
+#
+# dmrirc.masterclass
+#
+# TRACULA configuration for the masterclass subject (sub-BANDA001 from the
+# FreeSurfer TRACULA tutorial data). Reconstructs the 8 bundles used in the
+# notebook: left/right AF, CST, ILF, UF.
+#
+# To run it:
+#   1. Download and unpack the TRACULA tutorial data
+#      (https://surfer.nmr.mgh.harvard.edu/fswiki/FsTutorial/Tracula)
+#   2. Change TUTORIAL_DATA below to the folder that contains tracula_tutorial/
+#   3. trac-all -prep -c dmrirc.masterclass   # preprocessing, registration, priors
+#      trac-all -bedp -c dmrirc.masterclass   # ball-and-stick model (bedpostX)
+#      trac-all -path -c dmrirc.masterclass   # pathway reconstruction + pathstats
+#
+# Based on dmrirc.tutorial (tutorial data) and on dmrirc.example /
+# dmrirc.multiscan.example in $FREESURFER_HOME/bin (Anastasia Yendiki,
+# FreeSurfer Software License: https://surfer.nmr.mgh.harvard.edu/fswiki/FreeSurferSoftwareLicense).
+# All options: https://surfer.nmr.mgh.harvard.edu/fswiki/dmrirc
+# A parameter left out of this file takes its default value.
+#
+
+set TUTORIAL_DATA = /path/to/TRACULA_TUTORIAL          # <-- change this
+
+# ---- Inputs -------------------------------------------------------------------
+
+# FreeSurfer SUBJECTS_DIR: recon-all outputs (T1, aparc+aseg, thalamic nuclei)
+setenv SUBJECTS_DIR $TUTORIAL_DATA/tracula_tutorial/fs
+
+# Output directory (a new one, so the outputs shipped with the tutorial in trc/
+# are not overwritten)
+set dtroot = $TUTORIAL_DATA/tracula_tutorial/trc_masterclass
+
+# Subject IDs: one entry per diffusion scan. sub-BANDA001 has 4 scans
+# (two direction sets, dir98 and dir99, each acquired AP and PA), so it is
+# listed 4 times and TRACULA merges them into one data set.
+set subjlist = ( sub-BANDA001 sub-BANDA001 sub-BANDA001 sub-BANDA001 )
+
+# Diffusion images, gradient tables and b-values (relative to dcmroot)
+# Multi-shell: b = 1500 and 3000 s/mm^2, 1.5 mm isotropic
+set dcmroot = $TUTORIAL_DATA/tracula_tutorial/bids
+set dcmlist = ( sub-BANDA001/dwi/sub-BANDA001_run-dir98_AP_dwi.nii.gz \
+                sub-BANDA001/dwi/sub-BANDA001_run-dir98_PA_dwi.nii.gz \
+                sub-BANDA001/dwi/sub-BANDA001_run-dir99_AP_dwi.nii.gz \
+                sub-BANDA001/dwi/sub-BANDA001_run-dir99_PA_dwi.nii.gz )
+set bveclist = ( sub-BANDA001/dwi/sub-BANDA001_run-dir98_AP_dwi.bvec \
+                 sub-BANDA001/dwi/sub-BANDA001_run-dir98_PA_dwi.bvec \
+                 sub-BANDA001/dwi/sub-BANDA001_run-dir99_AP_dwi.bvec \
+                 sub-BANDA001/dwi/sub-BANDA001_run-dir99_PA_dwi.bvec )
+set bvallist = ( sub-BANDA001/dwi/sub-BANDA001_run-dir98_AP_dwi.bval \
+                 sub-BANDA001/dwi/sub-BANDA001_run-dir98_PA_dwi.bval \
+                 sub-BANDA001/dwi/sub-BANDA001_run-dir99_AP_dwi.bval \
+                 sub-BANDA001/dwi/sub-BANDA001_run-dir99_PA_dwi.bval )
+
+# ---- Preprocessing (trac-all -prep) ---------------------------------------------
+
+# B0 (susceptibility) distortion correction
+# 0: none, 1: field map, 2: reverse phase-encode scans with topup
+set dob0 = 2
+
+# Phase-encode direction of each scan (AP/PA pairs -> topup)
+set pedir = ( AP PA AP PA )
+
+# Echo spacing (ms) and EPI factor: topup needs them for the readout time.
+# From the BIDS sidecars: EffectiveEchoSpacing = 0.00069 s, AcquisitionMatrixPE = 140
+# (readout time = 0.69 ms x 139 = 95.9 ms = TotalReadoutTime in the .json)
+set echospacing = 0.69
+set epifactor = 140
+
+# Eddy-current and motion correction
+# 0: none, 1: eddy_correct (registration), 2: FSL eddy (model-based, default)
+set doeddy = 2
+set dorotbvecs = 1          # rotate the gradient vectors with the motion correction
+
+# Diffusion -> T1 (same subject) registration
+# 1: affine, correlation ratio  2: affine, mutual information  3: boundary-based, bbregister (default)
+set intrareg = 3
+
+# Subject -> template registration (to bring in the anatomical priors)
+# 1-3: affine T1-to-T1  4: nonlinear T1-to-T1 (CVS)  5: nonlinear FA-to-FA (SyN, default)
+set interreg = 5
+
+# Tensor fit (dtifit, makes dmri/dtifit_FA.nii.gz etc.): by default it uses all the DWIs,
+# here both shells (b = 1500 and 3000). The tensor model fits low b-values best, so to fit it
+# only on b <= 1500 (as is common for multi-shell data) uncomment the next line.
+# The outputs shipped with the tutorial were made without it.
+# set bmax = 1500
+
+# ---- Anatomical priors ------------------------------------------------------------
+
+# Segmentation used for the anatomical neighbourhood priors
+# ($SUBJECTS_DIR/<subject>/mri/<segname>.mgz)
+set segname = aparc+aseg
+
+# Merge the thalamic nuclei segmentation into it (recommended for pathways that
+# end in or run next to the thalamus)
+set usethalnuc = 1
+
+# Training subjects: manually annotated pathways the priors are learned from
+# (16 HCP subjects; this is the "avg16" in the output folder names)
+set trainfile = $FREESURFER_HOME/trctrain/hcp/trainlist.txt
+
+# Pathways to reconstruct and number of control points of each path
+# (default: all 42 pathways in $FREESURFER_HOME/trctrain/hcp/pathlist.txt)
+set pathlist = ( lh.af rh.af lh.cst rh.cst lh.ilf rh.ilf lh.uf rh.uf )
+set ncpts    = ( 9     9     7      7      8      8      7     7     )
+
+# ---- Local diffusion model (trac-all -bedp) -------------------------------------------
+
+# Number of anisotropic compartments ("sticks") per voxel in the ball-and-stick model
+set nstick = 2
+
+# ---- Path reconstruction (trac-all -path) ---------------------------------------------
+
+# MCMC sampling of the path: discard the first nburnin samples, draw nsample,
+# keep every nkeep-th -> 7500 / 5 = 1500 path samples (the "Count" in pathstats.overall.txt)
+set nburnin = 200
+set nsample = 7500
+set nkeep = 5

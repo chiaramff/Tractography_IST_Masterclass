@@ -1,0 +1,20 @@
+name: tractography-masterclass
+channels:
+  - conda-forge
+  - mrtrix3
+dependencies:
+  - python=3.11
+  - mrtrix3=3.0.4
+  - numpy<2
+  - scipy
+  - nibabel
+  - dipy=1.9
+  - pandas
+  - matplotlib
+  - plotly
+  - scikit-image
+  - jupyterlab
+  - nbconvert
+  - ipykernel
+  - requests
+  - tqdm

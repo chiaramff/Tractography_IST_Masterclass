@@ -1,0 +1,23 @@
+# local helpers / caches
+.pylibs/
+tmp/
+.ipynb_checkpoints/
+env_build.log
+derivatives_tractography.log
+
+# downloaded inputs and generated outputs
+data/
+outputs/
+derivatives/*/work/
+
+# wholebrain.tck is published as a GitHub release asset, not committed
+derivatives/*/tractography/*.tck
+
+# files uploaded to the GitHub release, not committed
+release/
+
+# personal settings for one machine (see the "Optional: your paths" cell)
+local_setup.py
+TODO.md
+__pycache__/
+derivatives/
