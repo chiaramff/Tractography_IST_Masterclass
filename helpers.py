@@ -68,6 +68,22 @@ def fetch_tutorial_data(data_dir, release_url, local_dir=None, subject="sub-BAND
     return root
 
 
+def fetch_recobundles_cache(reco_dir, release_url):
+    # Precomputed RecoBundles results (the 8 bundles, the SLR transform and centroids, the lh.uf threshold runs),
+    # downloaded once from this repository's release into reco_dir. Skips ~15-20 min of computing, and gives
+    # everyone the same bundles (different DIPY versions recognise slightly different ones).
+    reco_dir = Path(reco_dir)
+    if (reco_dir / "slr_xfm.txt").exists():
+        return
+    archive = reco_dir / "recobundles_cache.tar.gz"
+    reco_dir.mkdir(parents=True, exist_ok=True)
+    print("downloading the precomputed RecoBundles results (~3 MB) ...")
+    urlretrieve(f"{release_url}/{archive.name}", archive)
+    with tarfile.open(archive) as tar:
+        tar.extractall(reco_dir)
+    archive.unlink()
+
+
 def save_tck(streamlines, path, reference):
     # Write streamlines (RAS mm) to a .tck file; `reference` is the image that defines the voxel grid.
     save_tractogram(StatefulTractogram(streamlines, reference, Space.RASMM), str(path), bbox_valid_check=False)
