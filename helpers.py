@@ -5,6 +5,7 @@ lesson: running command-line tools, FreeSurfer label numbers, and the figures.
 """
 import base64
 import io
+import os
 import shutil
 import subprocess
 import tarfile
@@ -19,11 +20,12 @@ from matplotlib.colors import to_rgb
 from plotly.subplots import make_subplots
 from PIL import Image
 from scipy.ndimage import binary_dilation, gaussian_filter
+from scipy.spatial import cKDTree
 from skimage.measure import marching_cubes
 
 from dipy.io.stateful_tractogram import Space, StatefulTractogram
 from dipy.io.streamline import save_tractogram
-from dipy.tracking.streamline import length, transform_streamlines
+from dipy.tracking.streamline import Streamlines, length, transform_streamlines
 
 
 # ---- command-line tools ---------------------------------------------------------------------------
@@ -182,12 +184,18 @@ SCENE = dict(aspectmode="data", xaxis_visible=False, yaxis_visible=False, zaxis_
              camera=dict(eye=dict(x=-1.6, y=0.3, z=0.3)))
 
 
+def _thin(s, spacing=2.0):
+    # For drawing only: keep about one point every `spacing` mm (and both ends), so figures stay small.
+    step = max(1, int(round(spacing / max(np.linalg.norm(s[1] - s[0]), 1e-6)))) if len(s) > 2 else 1
+    return s[::step] if (len(s) - 1) % step == 0 else np.vstack([s[::step], s[-1:]])
+
+
 def lines3d(sl, color, name, max_n=150, seed=0, **kw):
     # Up to max_n streamlines as ONE Scatter3d trace (NaN rows break the line between streamlines).
     if len(sl) == 0:
         return go.Scatter3d(x=[], y=[], z=[], mode="lines", name=name, line=dict(color=color), **kw)
     idx = np.random.default_rng(seed).choice(len(sl), min(max_n, len(sl)), replace=False)
-    xyz = np.vstack([np.vstack([sl[i], [np.nan] * 3]) for i in idx])
+    xyz = np.vstack([np.vstack([_thin(sl[i]), [np.nan] * 3]) for i in idx]).astype(np.float32)   # float32: smaller figures
     kw.setdefault("opacity", 0.6)
     return go.Scatter3d(x=xyz[:, 0], y=xyz[:, 1], z=xyz[:, 2], mode="lines", name=name,
                         line=dict(color=color, width=2), hoverinfo="name", **kw)
@@ -195,7 +203,8 @@ def lines3d(sl, color, name, max_n=150, seed=0, **kw):
 
 def isosurface(vol, level, affine, color, name, step=1, **kw):
     verts, faces, _, _ = marching_cubes(vol, level, step_size=step)
-    v = nib.affines.apply_affine(affine, verts)
+    v = nib.affines.apply_affine(affine, verts).astype(np.float32)          # float32 / int32: smaller figures
+    faces = faces.astype(np.int32)
     kw.setdefault("hoverinfo", "name")
     return go.Mesh3d(x=v[:, 0], y=v[:, 1], z=v[:, 2], i=faces[:, 0], j=faces[:, 1], k=faces[:, 2],
                      color=color, name=name, **kw)
@@ -283,12 +292,19 @@ def _scene_fig(height=600, title=None):
     return fig
 
 
-def plot_tracula(pd_vol, brain_mask, affine):
+def plot_tracula(pd_vol, brain_mask, affine, tracula_dir=None):
     # All TRACULA path distributions together (surface at 10% of each path.pd's maximum); click the legend to hide one.
+    # With tracula_dir ({bundle: dpath folder}), the legend (and the hover label) shows each bundle's FA_Avg_Weight
+    # from pathstats.overall.txt. The legend because the glass brain around the bundles can block the hover.
     fig = _scene_fig(650, "TRACULA: path distributions (path.pd) of all bundles")
     fig.add_trace(glass_brain(brain_mask, affine))
     for b, pd_ in pd_vol.items():
-        fig.add_trace(pd_surface(pd_, affine, BUNDLE_COLORS.get(b, "#2a78d6"), name=b, opacity=0.6, showlegend=True))
+        kw, name = {}, b
+        if tracula_dir is not None:
+            fa_w = read_pathstats(tracula_dir[b])["FA_Avg_Weight"]
+            name = f"{b}  FA_Avg_Weight {fa_w:.3f}"
+            kw["hovertemplate"] = f"<b>{b}</b><br>FA_Avg_Weight = {fa_w:.3f}<extra></extra>"
+        fig.add_trace(pd_surface(pd_, affine, BUNDLE_COLORS.get(b, "#2a78d6"), name=name, opacity=0.6, showlegend=True, **kw))
     return fig
 
 
@@ -376,7 +392,7 @@ def plot_wholebrain(wb, bin_mm=5, per_bin=100, n_all=2000, seed=1):
         rgb = np.round(ends / np.linalg.norm(ends, axis=1, keepdims=True) * 2) / 2
         for col in np.unique(rgb, axis=0):
             sel = idx[(rgb == col).all(1)]
-            xyz = np.vstack([np.vstack([wb[i], [np.nan] * 3]) for i in sel])
+            xyz = np.vstack([np.vstack([_thin(wb[i]), [np.nan] * 3]) for i in sel]).astype(np.float32)
             fig.add_scatter3d(x=xyz[:, 0], y=xyz[:, 1], z=xyz[:, 2], mode="lines", visible=(step == 0), opacity=0.6,
                               line=dict(color="rgb({},{},{})".format(*(col * 255).astype(int)), width=1.5),
                               hoverinfo="skip", showlegend=False, row=1, col=1)
@@ -529,6 +545,30 @@ def plot_mrtrix_vs_dipy(fa_df, colors):
 INK, MUTED, GRID = "#0b0b0b", "#8a8984", "#e6e5e0"
 
 
+def orient(sl, roi_xyz):
+    # Flip streamlines so that point 0 is the end closest to an ROI (roi_xyz: the ROI's voxels, in mm).
+    # Distance to the nearest ROI voxel, not to the ROI centre: with a large ROI, an end can be inside
+    # the ROI but far from its centre.
+    tree = cKDTree(roi_xyz)                     # fast nearest-voxel distances
+    out = []
+    for s in sl:
+        if tree.query(s[-1])[0] < tree.query(s[0])[0]:
+            s = s[::-1]                         # last point is closer to the ROI: flip
+        out.append(s)
+    return Streamlines(out)
+
+
+def profile_tracula(byvoxel, roi_xyz, affine, n_points=100, column="FA_Avg"):
+    # TRACULA's values along its path (pathstats.byvoxel.txt), oriented so that the first row is the end closest
+    # to the ROI and resampled to n_points by arc length, so it shares the 0-100 % axis with the other methods.
+    xyz = nib.affines.apply_affine(affine, byvoxel[["x", "y", "z"]].to_numpy(float))   # voxel -> mm
+    vals = byvoxel[column].to_numpy()
+    if not np.array_equal(orient([xyz], roi_xyz)[0][0], xyz[0]):                       # orient flipped it
+        xyz, vals = xyz[::-1], vals[::-1]
+    arc = np.r_[0, np.cumsum(np.linalg.norm(np.diff(xyz, axis=0), axis=1))]           # arc length (mm)
+    return np.interp(np.linspace(0, arc[-1], n_points), arc, vals)
+
+
 def plot_orientation(raw, oriented, color):
     # First point of every streamline, before and after orienting.
     fig = make_subplots(rows=1, cols=2, specs=[[{"type": "scene"}] * 2], subplot_titles=["raw", "oriented"])
@@ -571,7 +611,7 @@ def plot_profile_steps(raw_values, fa_oriented, prof_unoriented, prof_oriented, 
 
 def plot_profiles(prof_df, colors, start_label, end_label):
     # Along-tract FA profiles: one panel per bundle, colour = method, dash = tool.
-    dash = {"DIPY afq_profile (weighted)": "solid", "MRtrix3 (unweighted)": "dot", "TRACULA pathstats (FA_Avg)": "dash"}
+    dash = {"DIPY BUAN": "solid", "MRtrix3 tckresample -arc": "solid", "TRACULA pathstats (FA_Avg)": "dash"}
     tracts = list(start_label)
     fig = make_subplots(rows=len(tracts), cols=2, shared_xaxes=True, shared_yaxes=True, vertical_spacing=0.05,
                         horizontal_spacing=0.04, subplot_titles=[f"{h}.{t}" for t in tracts for h in ("lh", "rh")])
@@ -599,6 +639,23 @@ def plot_profiles(prof_df, colors, start_label, end_label):
 
 # ---- connectome -----------------------------------------------------------------------------------
 
+def find_lut(name, tutorial_dir, out_dir):
+    # Find a label table that comes with the software, copy it to out_dir and return the copy:
+    #   FreeSurferColorLUT.txt  in $FREESURFER_HOME (no FreeSurfer, e.g. Colab: the copy in the tutorial data)
+    #   fs_default.txt          in <MRtrix3>/share/mrtrix3/labelconvert, or MRTRIX_LABELCONVERT_DIR
+    #                           (needed when MRtrix3 runs from a container and its share/ folder is not on disk)
+    # The copy is there because an MRtrix3 container may not see the software folders.
+    labelconvert = shutil.which("labelconvert")
+    places = {"FreeSurferColorLUT.txt": [os.environ.get("FREESURFER_HOME"), tutorial_dir],
+              "fs_default.txt": [os.environ.get("MRTRIX_LABELCONVERT_DIR"),
+                                 labelconvert and Path(labelconvert).parents[1] / "share" / "mrtrix3" / "labelconvert"]}
+    for d in places[name]:
+        if d and (Path(d) / name).exists():
+            print(f"{name}: {Path(d) / name}")
+            return Path(shutil.copy(Path(d) / name, out_dir))
+    raise FileNotFoundError(f"{name} not found in: {', '.join(str(d) for d in places[name] if d)}")
+
+
 def read_node_names(lut_file):
     # Node names from an MRtrix3 labelconvert table (e.g. fs_default.txt): index, short name, full name, RGBA.
     # (fs_default.txt lists two FreeSurfer names for the thalamus; keep the first)
@@ -607,6 +664,24 @@ def read_node_names(lut_file):
         names.setdefault(int(r[0]), r[2])
     names.pop(0, None)
     return names
+
+
+def plot_edges(edge_tracts, parcels_file, names, brain_mask, affine):
+    # edge_tracts: {(node1, node2): streamlines}. Each connection's two regions as surfaces + its streamlines.
+    parcels = np.asarray(nib.load(parcels_file).dataobj)
+    colors = ["#2a78d6", "#eb6834", "#1baf7a", "#8e4fd1"]
+    fig = go.Figure([glass_brain(brain_mask, affine)])
+    for k, ((n1, n2), sl) in enumerate(edge_tracts.items()):
+        c = colors[k % len(colors)]
+        group = f"{names[n1]} – {names[n2]}"
+        for n in (n1, n2):
+            fig.add_trace(isosurface(gaussian_filter((parcels == n).astype(float), 0.5), 0.5, affine, c, names[n],
+                                     opacity=0.2, legendgroup=group, showlegend=False, hoverinfo="name"))
+        fig.add_trace(lines3d(sl, c, f"{group} ({len(sl):,} streamlines)", legendgroup=group))
+    fig.update_layout(height=600, template="plotly_white", scene=SCENE, margin=dict(l=0, r=0, t=40, b=0),
+                      title="Streamlines of the strongest connections, with their two regions",
+                      legend=dict(itemsizing="constant", y=0.95))
+    return fig
 
 
 def plot_connectome(C, names):
